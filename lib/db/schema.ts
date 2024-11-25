@@ -5,6 +5,7 @@ import {
   text,
   timestamp,
   integer,
+  jsonb,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
@@ -68,6 +69,33 @@ export const invitations = pgTable('invitations', {
   status: varchar('status', { length: 20 }).notNull().default('pending'),
 });
 
+export const flashcards = pgTable('flashcards', {
+  id: serial('id').primaryKey(),
+  term: text('term').notNull(),
+  definition: text('definition').notNull(),
+  hint: text('hint'),
+  explanation: text('explanation'),
+  source: text('source').notNull(),
+  page: text('page').notNull(),
+  keyConcept: text('key_concept'),
+  difficulty: integer('difficulty').notNull().default(1),
+  index: integer('index').notNull().default(0),
+  metadata: jsonb('metadata'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
+export const lessonFiles = pgTable('lesson_files', {
+  id: serial('id').primaryKey(),
+  filename: text('filename').notNull(),
+  url: text('url').notNull(),
+  mimeType: text('mime_type').notNull(),
+  size: integer('size').notNull(),
+  metadata: jsonb('metadata'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
 export const teamsRelations = relations(teams, ({ many }) => ({
   teamMembers: many(teamMembers),
   activityLogs: many(activityLogs),
@@ -122,6 +150,10 @@ export type ActivityLog = typeof activityLogs.$inferSelect;
 export type NewActivityLog = typeof activityLogs.$inferInsert;
 export type Invitation = typeof invitations.$inferSelect;
 export type NewInvitation = typeof invitations.$inferInsert;
+export type Flashcard = typeof flashcards.$inferSelect;
+export type NewFlashcard = typeof flashcards.$inferInsert;
+export type LessonFile = typeof lessonFiles.$inferSelect;
+export type NewLessonFile = typeof lessonFiles.$inferInsert;
 export type TeamDataWithMembers = Team & {
   teamMembers: (TeamMember & {
     user: Pick<User, 'id' | 'name' | 'email'>;

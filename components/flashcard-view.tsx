@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -17,37 +17,53 @@ interface Flashcard {
   definition: string
   hint?: string
   explanation?: string
-  source?: string
-  page?: number
+  source: string
+  page: string
   keyConcept?: string
+  difficulty: number
+  index: number
   showMore?: boolean
+  metadata?: {
+    chapter?: string
+    section?: string
+    topic?: string
+    pageNumber?: number
+    lineNumber?: number
+  }
+}
+
+const DifficultyIndicator = ({ difficulty }: { difficulty: number }) => {
+  const getColor = () => {
+    if (difficulty <= 20) return 'bg-green-500'
+    if (difficulty <= 40) return 'bg-blue-500'
+    if (difficulty <= 60) return 'bg-yellow-500'
+    if (difficulty <= 80) return 'bg-orange-500'
+    return 'bg-red-500'
+  }
+
+  const getLabel = () => {
+    if (difficulty <= 20) return 'Basic'
+    if (difficulty <= 40) return 'Easy'
+    if (difficulty <= 60) return 'Medium'
+    if (difficulty <= 80) return 'Hard'
+    return 'Expert'
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <div className={`h-2 w-24 rounded-full bg-gray-200`}>
+        <div
+          className={`h-full rounded-full ${getColor()}`}
+          style={{ width: `${difficulty}%` }}
+        />
+      </div>
+      <span className="text-sm text-gray-600">{getLabel()} ({difficulty})</span>
+    </div>
+  )
 }
 
 export default function FlashcardView() {
-  const [cards, setCards] = useState<Flashcard[]>([
-    {
-      id: 1,
-      term: "What are some common applications of computers in daily life?",
-      definition: "Common applications include word processors, internet banking, online courses, GPS systems, and weather forecasting.",
-      hint: "Think about the different ways you use computers throughout your day.",
-      explanation: "Computers have become integral to daily life, offering solutions for both personal and professional tasks.",
-      source: "Introduction to Computing",
-      page: 1,
-      keyConcept: "Computer Applications",
-      showMore: false
-    },
-    {
-      id: 2,
-      term: "Where are computers commonly used?",
-      definition: "Computers are commonly used at home, work, and school, and are also embedded in devices like cars and smartphones.",
-      hint: "Consider different environments where you might see or use a computer.",
-      explanation: "Computers are versatile tools found in various settings, enhancing productivity and connectivity in personal, professional, and educational contexts.",
-      source: "Introduction to Computers",
-      page: 2,
-      keyConcept: "Computer Usage",
-      showMore: false
-    }
-  ])
+  const [cards, setCards] = useState<Flashcard[]>([])
   const [cardHistory, setCardHistory] = useState<Flashcard[][]>([])
   const [currentHistoryIndex, setCurrentHistoryIndex] = useState(-1)
   const [currentCard, setCurrentCard] = useState(0)
@@ -57,6 +73,12 @@ export default function FlashcardView() {
   const [editingCard, setEditingCard] = useState<Flashcard | null>(null)
   const [editedTerm, setEditedTerm] = useState('')
   const [editedDefinition, setEditedDefinition] = useState('')
+  const [editedHint, setEditedHint] = useState('')
+  const [editedExplanation, setEditedExplanation] = useState('')
+  const [editedKeyConcept, setEditedKeyConcept] = useState('')
+  const [editedDifficulty, setEditedDifficulty] = useState('')
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [isManageDialogOpen, setIsManageDialogOpen] = useState(false)
   const [cardToDelete, setCardToDelete] = useState<number | null>(null)
   const [newCard, setNewCard] = useState<Flashcard>({
@@ -66,10 +88,61 @@ export default function FlashcardView() {
     hint: '',
     explanation: '',
     source: '',
-    page: undefined,
+    page: '',
     keyConcept: '',
+    difficulty: 0,
+    index: 0,
     showMore: false
   })
+
+  useEffect(() => {
+    const fetchFlashcards = async () => {
+      try {
+        const response = await fetch('/api/flashcards');
+        if (!response.ok) {
+          throw new Error('Failed to fetch flashcards');
+        }
+        const data = await response.json();
+        const processedCards = data.flashcards.map((card: any, index: number) => ({
+          ...card,
+          index,
+          showMore: false
+        }));
+        setCards(processedCards);
+        setIsLoading(false);
+      } catch (err) {
+        console.error('Error fetching flashcards:', err);
+        setError(err instanceof Error ? err.message : 'Failed to load flashcards');
+        setIsLoading(false);
+      }
+    };
+
+    fetchFlashcards();
+  }, []);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-gray-900"></div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px] text-red-500">
+        {error}
+      </div>
+    );
+  }
+
+  if (cards.length === 0) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px] text-gray-500">
+        No flashcards available. Upload a PDF to generate flashcards.
+      </div>
+    );
+  }
 
   // Save current state to history when making changes
   const saveToHistory = (newCards: Flashcard[]) => {
@@ -123,25 +196,29 @@ export default function FlashcardView() {
     setEditingCard({ ...card })
     setEditedTerm(card.term)
     setEditedDefinition(card.definition)
+    setEditedHint(card.hint || '')
+    setEditedExplanation(card.explanation || '')
+    setEditedKeyConcept(card.keyConcept || '')
+    setEditedDifficulty(card.difficulty.toString())
     setIsEditing(true)
   }
 
-  const handleSaveEdit = () => {
-    if (!editingCard) return
+  const handleSaveEdit = async () => {
+    if (!editingCard) return;
 
-    const newCards = cards.map(card =>
-      card.id === editingCard.id
-        ? { 
-            ...editingCard,
-            term: editedTerm,
-            definition: editedDefinition
-          }
-        : card
-    )
-    handleCardChange(newCards)
-    setIsEditing(false)
-    setEditingCard(null)
-  }
+    const updates = {
+      term: editedTerm,
+      definition: editedDefinition,
+      hint: editedHint,
+      explanation: editedExplanation,
+      keyConcept: editedKeyConcept,
+      difficulty: parseInt(editedDifficulty)
+    };
+
+    await handleUpdate(editingCard.id, updates);
+    setIsEditing(false);
+    setEditingCard(null);
+  };
 
   const handleCancelEdit = () => {
     setIsEditing(false)
@@ -164,8 +241,10 @@ export default function FlashcardView() {
         hint: '',
         explanation: '',
         source: '',
-        page: undefined,
+        page: '',
         keyConcept: '',
+        difficulty: 0,
+        index: 0,
         showMore: false
       })
     }
@@ -176,16 +255,95 @@ export default function FlashcardView() {
     setCardToDelete(null)
   }
 
-  // Handle drag end
-  const handleDragEnd = (result: any) => {
-    if (!result.destination) return
-    
-    const newCards = Array.from(cards)
-    const [reorderedItem] = newCards.splice(result.source.index, 1)
-    newCards.splice(result.destination.index, 0, reorderedItem)
-    
-    handleCardChange(newCards)
-  }
+  const handleDelete = async (id: number) => {
+    try {
+      const response = await fetch(`/api/flashcards?id=${id}`, {
+        method: 'DELETE',
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to delete flashcard');
+      }
+
+      // Update local state
+      const newCards = cards.filter(card => card.id !== id);
+      // Update indices
+      const updatedCards = newCards.map((card, idx) => ({
+        ...card,
+        index: idx
+      }));
+
+      // Update indices in database
+      await Promise.all(updatedCards.map(card => 
+        fetch('/api/flashcards', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: card.id, index: card.index })
+        })
+      ));
+
+      setCards(updatedCards);
+      saveToHistory(updatedCards);
+    } catch (error) {
+      console.error('Error deleting flashcard:', error);
+      // You might want to show an error message to the user here
+    }
+  };
+
+  const handleUpdate = async (id: number, updates: Partial<Flashcard>) => {
+    try {
+      const response = await fetch('/api/flashcards', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, ...updates })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to update flashcard');
+      }
+
+      const updatedCards = cards.map(card => 
+        card.id === id ? { ...card, ...updates } : card
+      );
+
+      setCards(updatedCards);
+      saveToHistory(updatedCards);
+    } catch (error) {
+      console.error('Error updating flashcard:', error);
+      // You might want to show an error message to the user here
+    }
+  };
+
+  const handleDragEnd = async (result: any) => {
+    if (!result.destination) return;
+
+    const items = Array.from(cards);
+    const [reorderedItem] = items.splice(result.source.index, 1);
+    items.splice(result.destination.index, 0, reorderedItem);
+
+    // Update indices
+    const updatedCards = items.map((card, idx) => ({
+      ...card,
+      index: idx
+    }));
+
+    // Update indices in database
+    try {
+      await Promise.all(updatedCards.map(card => 
+        fetch('/api/flashcards', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: card.id, index: card.index })
+        })
+      ));
+
+      setCards(updatedCards);
+      saveToHistory(updatedCards);
+    } catch (error) {
+      console.error('Error updating card indices:', error);
+      // You might want to show an error message to the user here
+    }
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -262,15 +420,8 @@ export default function FlashcardView() {
                       <div>
                         <label className="block text-sm font-medium mb-2">Hint</label>
                         <Input
-                          value={editingCard.hint || ''}
-                          onChange={(e) => {
-                            if (editingCard) {
-                              setEditingCard({
-                                ...editingCard,
-                                hint: e.target.value
-                              })
-                            }
-                          }}
+                          value={editedHint}
+                          onChange={(e) => setEditedHint(e.target.value)}
                           placeholder="Add a hint for this card"
                         />
                       </div>
@@ -278,15 +429,8 @@ export default function FlashcardView() {
                       <div>
                         <label className="block text-sm font-medium mb-2">Explanation</label>
                         <Textarea
-                          value={editingCard.explanation || ''}
-                          onChange={(e) => {
-                            if (editingCard) {
-                              setEditingCard({
-                                ...editingCard,
-                                explanation: e.target.value
-                              })
-                            }
-                          }}
+                          value={editedExplanation}
+                          onChange={(e) => setEditedExplanation(e.target.value)}
                           placeholder="Add a detailed explanation"
                           rows={2}
                         />
@@ -296,7 +440,7 @@ export default function FlashcardView() {
                         <div>
                           <label className="block text-sm font-medium mb-2">Source</label>
                           <Input
-                            value={editingCard.source || ''}
+                            value={editingCard?.source || ''}
                             onChange={(e) => {
                               if (editingCard) {
                                 setEditingCard({
@@ -312,7 +456,7 @@ export default function FlashcardView() {
                           <label className="block text-sm font-medium mb-2">Page</label>
                           <Input
                             type="number"
-                            value={editingCard.page || ''}
+                            value={editingCard?.page || ''}
                             onChange={(e) => {
                               if (editingCard) {
                                 setEditingCard({
@@ -329,16 +473,19 @@ export default function FlashcardView() {
                       <div>
                         <label className="block text-sm font-medium mb-2">Key concept</label>
                         <Input
-                          value={editingCard.keyConcept || ''}
-                          onChange={(e) => {
-                            if (editingCard) {
-                              setEditingCard({
-                                ...editingCard,
-                                keyConcept: e.target.value
-                              })
-                            }
-                          }}
+                          value={editedKeyConcept}
+                          onChange={(e) => setEditedKeyConcept(e.target.value)}
                           placeholder="Main concept or topic"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium mb-2">Difficulty</label>
+                        <Input
+                          type="number"
+                          value={editedDifficulty}
+                          onChange={(e) => setEditedDifficulty(e.target.value)}
+                          placeholder="Difficulty level"
                         />
                       </div>
                     </div>
@@ -627,8 +774,45 @@ export default function FlashcardView() {
                                         placeholder="Main concept or topic"
                                       />
                                     </div>
+
+                                    <div>
+                                      <label className="block text-sm font-medium mb-2">Difficulty</label>
+                                      <DifficultyIndicator difficulty={card.difficulty} />
+                                    </div>
                                   </div>
                                 )}
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setCardToDelete(card.id);
+                                      }}
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>Delete Flashcard</AlertDialogTitle>
+                                      <AlertDialogDescription>
+                                        Are you sure you want to delete this flashcard? This action cannot be undone.
+                                      </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                      <AlertDialogCancel onClick={() => setCardToDelete(null)}>Cancel</AlertDialogCancel>
+                                      <AlertDialogAction onClick={() => {
+                                        if (cardToDelete !== null) {
+                                          handleDelete(cardToDelete);
+                                          setCardToDelete(null);
+                                        }
+                                      }}>Delete</AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
                               </div>
                             </div>
                           )}
@@ -649,7 +833,8 @@ export default function FlashcardView() {
                       id: Math.max(...cards.map(c => c.id)) + 1,
                       term: '',
                       definition: '',
-                      showMore: false
+                      showMore: false,
+                      difficulty: 0
                     }
                   ]
                   handleCardChange(newCards)

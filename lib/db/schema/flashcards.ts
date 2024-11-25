@@ -2,15 +2,18 @@ import { pgTable, serial, text, timestamp, integer, jsonb } from 'drizzle-orm/pg
 
 export const flashcards = pgTable('flashcards', {
   id: serial('id').primaryKey(),
-  question: text('question').notNull(),
-  answer: text('answer').notNull(),
+  term: text('term').notNull(),
+  definition: text('definition').notNull(),
   hint: text('hint'),
-  difficulty: integer('difficulty').notNull(),
-  sourceFile: text('source_file').notNull(),
-  vectorEmbedding: text('vector_embedding').notNull(),
+  explanation: text('explanation'),
+  source: text('source').notNull(), // filename is required
+  page: text('page').notNull(), // page and line number is required (format: "page:line")
+  keyConcept: text('key_concept'),
+  difficulty: integer('difficulty').notNull().default(1), // difficulty score from 1-100
+  index: integer('index').notNull().default(0),
   metadata: jsonb('metadata'),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
 
 export const learningPaths = pgTable('learning_paths', {

@@ -51,8 +51,16 @@ interface FileStatus {
 
 interface Flashcard {
   id: number
-  term: string
-  definition: string
+  question: string
+  answer: string
+  hint?: string
+  difficulty: number
+  metadata: {
+    chapter: string
+    section: string | null
+    topic: string
+    language?: string
+  }
 }
 
 export default function Page() {
@@ -68,7 +76,7 @@ export default function Page() {
   const simulateFileProcessing = async (file: File) => {
     const fileKey = file.name + file.lastModified
 
-    // Simulate upload
+    // Start upload
     setFileStatuses(prev => {
       const newMap = new Map(prev)
       newMap.set(fileKey, { 
@@ -81,78 +89,56 @@ export default function Page() {
       return newMap
     })
 
-    for (let progress = 0; progress <= 100; progress += 10) {
-      await new Promise(resolve => setTimeout(resolve, 200))
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const response = await fetch('/api/files/process', {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to process file')
+      }
+
+      const result = await response.json()
+
+      // Complete processing
       setFileStatuses(prev => {
         const newMap = new Map(prev)
         const status = newMap.get(fileKey)
         if (status) {
-          newMap.set(fileKey, { ...status, uploadProgress: progress })
+          newMap.set(fileKey, { 
+            ...status, 
+            isUploading: false,
+            isScanning: false,
+            isGeneratingFlashcards: false,
+            uploadProgress: 100,
+          })
         }
         return newMap
       })
+
+      return result
+    } catch (error) {
+      console.error('Error processing file:', error)
+      setFileStatuses(prev => {
+        const newMap = new Map(prev)
+        const status = newMap.get(fileKey)
+        if (status) {
+          newMap.set(fileKey, { 
+            ...status, 
+            isUploading: false,
+            isScanning: false,
+            isGeneratingFlashcards: false,
+            uploadProgress: 0,
+          })
+        }
+        return newMap
+      })
+      throw error
     }
-
-    // Simulate scanning
-    setFileStatuses(prev => {
-      const newMap = new Map(prev)
-      const status = newMap.get(fileKey)
-      if (status) {
-        newMap.set(fileKey, { 
-          ...status, 
-          isUploading: false, 
-          isScanning: true, 
-          uploadProgress: 100 
-        })
-      }
-      return newMap
-    })
-    await new Promise(resolve => setTimeout(resolve, 2000))
-
-    // Simulate flashcard generation
-    setFileStatuses(prev => {
-      const newMap = new Map(prev)
-      const status = newMap.get(fileKey)
-      if (status) {
-        newMap.set(fileKey, { 
-          ...status, 
-          isScanning: false, 
-          isGeneratingFlashcards: true 
-        })
-      }
-      return newMap
-    })
-    await new Promise(resolve => setTimeout(resolve, 2000))
-
-    // Complete processing with sample flashcards
-    setFileStatuses(prev => {
-      const newMap = new Map(prev)
-      const status = newMap.get(fileKey)
-      if (status) {
-        newMap.set(fileKey, { 
-          ...status, 
-          isGeneratingFlashcards: false,
-          flashcards: [
-            {
-              id: 1,
-              term: "Key Concept 1",
-              definition: "Definition of the first key concept from the document."
-            },
-            {
-              id: 2,
-              term: "Key Concept 2",
-              definition: "Definition of the second key concept from the document."
-            },
-            {
-              id: 3,
-              term: "Key Concept 3",
-              definition: "Definition of the third key concept from the document."
-            }
-          ]
-        })
-      }
-      return newMap
-    })
   }
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -347,10 +333,29 @@ export default function Page() {
                                       {status?.flashcards?.map((card, index) => (
                                         <Card key={card.id} className="p-4">
                                           <CardContent className="p-0">
-                                            <div className="font-medium mb-2">Term:</div>
-                                            <div className="text-sm mb-4 text-muted-foreground">{card.term}</div>
-                                            <div className="font-medium mb-2">Definition:</div>
-                                            <div className="text-sm text-muted-foreground">{card.definition}</div>
+                                            <div className="font-medium mb-2">Question:</div>
+                                            <div className="text-sm mb-4 text-muted-foreground">{card.question}</div>
+                                            <div className="font-medium mb-2">Answer:</div>
+                                            <div className="text-sm text-muted-foreground">{card.answer}</div>
+                                            {card.hint && (
+                                              <div>
+                                                <div className="font-medium mb-2">Hint:</div>
+                                                <div className="text-sm text-muted-foreground">{card.hint}</div>
+                                              </div>
+                                            )}
+                                            <div className="font-medium mb-2">Difficulty:</div>
+                                            <div className="text-sm text-muted-foreground">{card.difficulty}</div>
+                                            <div className="font-medium mb-2">Metadata:</div>
+                                            <div className="text-sm text-muted-foreground">
+                                              Chapter: {card.metadata.chapter}
+                                              {card.metadata.section && (
+                                                <div>Section: {card.metadata.section}</div>
+                                              )}
+                                              Topic: {card.metadata.topic}
+                                              {card.metadata.language && (
+                                                <div>Language: {card.metadata.language}</div>
+                                              )}
+                                            </div>
                                           </CardContent>
                                         </Card>
                                       ))}
