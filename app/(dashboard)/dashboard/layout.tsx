@@ -1,73 +1,96 @@
 'use client';
 
-import { useState } from 'react';
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { Button } from '@/components/ui/button';
-import { Users, Settings, Shield, Activity, Menu } from 'lucide-react';
+import { cn } from "@/lib/utils"
+import { ThemeSwitcher } from "@/components/theme-switcher"
+import { useUser } from "@/lib/auth"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Button } from "@/components/ui/button"
+import { Home, Library, Users, Settings, HelpCircle, FolderKanban, Menu } from "lucide-react"
+import { 
+  Sidebar, 
+  SidebarContent, 
+  SidebarFooter,
+  SidebarHeader,
+  SidebarProvider,
+  SidebarTrigger,
+  useSidebar
+} from "@/components/ui/sidebar"
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable"
+import { StudyControls } from "@/components/study-controls"
+
+const navigationItems = [
+  { name: 'Home', href: '/dashboard', icon: Home },
+  { name: 'Documents', href: '/dashboard/documents', icon: FolderKanban },
+  { name: 'Library', href: '/dashboard/library', icon: Library },
+  { name: 'Team', href: '/dashboard/team', icon: Users },
+  { name: 'Help', href: '/dashboard/help', icon: HelpCircle },
+  { name: 'Settings', href: '/dashboard/settings', icon: Settings },
+]
 
 export default function DashboardLayout({
   children,
 }: {
-  children: React.ReactNode;
+  children: React.ReactNode
 }) {
-  const pathname = usePathname();
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-
-  const navItems = [
-    { href: '/dashboard', icon: Users, label: 'Team' },
-    { href: '/dashboard/general', icon: Settings, label: 'General' },
-    { href: '/dashboard/activity', icon: Activity, label: 'Activity' },
-    { href: '/dashboard/security', icon: Shield, label: 'Security' },
-  ];
+  const { user } = useUser()
 
   return (
-    <div className="flex flex-col min-h-[calc(100dvh-68px)] max-w-7xl mx-auto w-full">
-      {/* Mobile header */}
-      <div className="lg:hidden flex items-center justify-between bg-white border-b border-gray-200 p-4">
-        <div className="flex items-center">
-          <span className="font-medium">Settings</span>
-        </div>
-        <Button
-          className="-mr-3"
-          variant="ghost"
-          onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-        >
-          <Menu className="h-6 w-6" />
-          <span className="sr-only">Toggle sidebar</span>
-        </Button>
-      </div>
-
-      <div className="flex flex-1 overflow-hidden h-full">
-        {/* Sidebar */}
-        <aside
-          className={`w-64 bg-white lg:bg-gray-50 border-r border-gray-200 lg:block ${
-            isSidebarOpen ? 'block' : 'hidden'
-          } lg:relative absolute inset-y-0 left-0 z-40 transform transition-transform duration-300 ease-in-out lg:translate-x-0 ${
-            isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
-          }`}
-        >
-          <nav className="h-full overflow-y-auto p-4">
-            {navItems.map((item) => (
-              <Link key={item.href} href={item.href} passHref>
+    <SidebarProvider defaultOpen={true}>
+      <div className="flex h-screen overflow-hidden bg-background">
+        <StudyControls />
+        <Sidebar collapsible="icon">
+          <SidebarHeader>
+            <div className="flex items-center gap-2">
+              <Avatar className="h-8 w-8 shrink-0">
+                <AvatarImage src={user?.image || ''} alt={user?.name || ''} />
+                <AvatarFallback>
+                  {user?.email?.charAt(0).toUpperCase() || 'U'}
+                </AvatarFallback>
+              </Avatar>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{user?.name || 'User'}</p>
+                <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
+              </div>
+            </div>
+          </SidebarHeader>
+          
+          <SidebarContent>
+            <nav className="space-y-1 px-3">
+              {navigationItems.map((item) => (
                 <Button
-                  variant={pathname === item.href ? 'secondary' : 'ghost'}
-                  className={`my-1 w-full justify-start ${
-                    pathname === item.href ? 'bg-gray-100' : ''
-                  }`}
-                  onClick={() => setIsSidebarOpen(false)}
+                  key={item.name}
+                  variant="ghost"
+                  className="w-full justify-start gap-2"
+                  asChild
                 >
-                  <item.icon className="mr-2 h-4 w-4" />
-                  {item.label}
+                  <a href={item.href}>
+                    <item.icon className="h-4 w-4 shrink-0" />
+                    <span className="truncate">{item.name}</span>
+                  </a>
                 </Button>
-              </Link>
-            ))}
-          </nav>
-        </aside>
+              ))}
+            </nav>
+          </SidebarContent>
 
-        {/* Main content */}
-        <main className="flex-1 overflow-y-auto p-0 lg:p-4">{children}</main>
+          <SidebarFooter>
+            <ThemeSwitcher />
+          </SidebarFooter>
+        </Sidebar>
+
+        <div className="flex-1 flex flex-col min-h-0">
+          <header className="h-14 border-b px-4 flex items-center gap-4 sticky top-0 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+            <SidebarTrigger />
+            <div className="font-semibold">YouLearn</div>
+          </header>
+          <main className="flex-1 overflow-hidden">
+            {children}
+          </main>
+        </div>
       </div>
-    </div>
-  );
+    </SidebarProvider>
+  )
 }

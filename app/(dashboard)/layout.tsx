@@ -13,7 +13,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useUser } from '@/lib/auth';
 import { signOut } from '@/app/(login)/actions';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 
 function Header() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -85,9 +85,12 @@ function Header() {
 }
 
 export default function Layout({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname(); // Add this line
+  const isDashboard = pathname === '/dashboard'; // Add this line
+
   return (
     <section className="flex flex-col min-h-screen">
-      <Header />
+      {!isDashboard && <Header />} {/* Conditionally render the header */}
       {children}
     </section>
   );
