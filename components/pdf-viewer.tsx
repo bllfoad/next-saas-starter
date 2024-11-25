@@ -7,24 +7,45 @@ import { ZoomIn, ZoomOut, Download, Printer, RotateCw, ChevronLeft, ChevronRight
 
 interface PDFViewerProps {
   file: File | null
+  fileUrl?: string
 }
 
-export default function PDFViewer({ file }: PDFViewerProps) {
+export default function PDFViewer({ file, fileUrl }: PDFViewerProps) {
   const [currentPage, setCurrentPage] = useState(1)
   const [totalPages] = useState(18)
   const [zoom, setZoom] = useState(100)
   const [rotation, setRotation] = useState(0)
+  const [objectUrl, setObjectUrl] = useState<string | null>(null)
+
+  // Create object URL when file changes
+  useEffect(() => {
+    if (file) {
+      const url = URL.createObjectURL(file)
+      setObjectUrl(url)
+      return () => URL.revokeObjectURL(url)
+    }
+  }, [file])
 
   // Reset current page when file changes
   useEffect(() => {
     setCurrentPage(1)
-  }, [file])
+  }, [file, fileUrl])
+
+  const displayUrl = fileUrl || objectUrl
 
   const handleZoomIn = () => setZoom(prev => Math.min(prev + 10, 200))
   const handleZoomOut = () => setZoom(prev => Math.max(prev - 10, 20))
   const handleRotate = () => setRotation(prev => (prev + 90) % 360)
   const handlePrevPage = () => setCurrentPage(prev => Math.max(prev - 1, 1))
   const handleNextPage = () => setCurrentPage(prev => Math.min(prev + 1, totalPages))
+
+  if (!displayUrl && !file) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <p className="text-gray-500">No file selected</p>
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col h-full">
@@ -81,26 +102,16 @@ export default function PDFViewer({ file }: PDFViewerProps) {
           </Button>
         </div>
       </div>
-      <div className="flex-1 overflow-auto bg-muted/20 p-4">
-        {file ? (
-          <div className="mx-auto max-w-4xl bg-white shadow-lg">
-            <div 
-              className="aspect-[1/1.4] w-full bg-white p-8"
-              style={{
-                transform: `scale(${zoom / 100}) rotate(${rotation}deg)`,
-                transformOrigin: 'center center',
-                transition: 'transform 0.3s ease'
-              }}
-            >
-              <div className="h-full w-full border-2 border-dashed flex items-center justify-center">
-                <p>Page {currentPage} content would be displayed here</p>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="flex h-full items-center justify-center">
-            <p className="text-muted-foreground">No file selected</p>
-          </div>
+      <div className="flex-1 relative overflow-auto bg-gray-100">
+        {displayUrl && (
+          <iframe
+            src={displayUrl}
+            className="w-full h-full"
+            style={{
+              transform: `scale(${zoom / 100}) rotate(${rotation}deg)`,
+              transformOrigin: 'center center'
+            }}
+          />
         )}
       </div>
     </div>

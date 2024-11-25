@@ -15,6 +15,20 @@
       "when": 1732555701077,
       "tag": "0001_young_madripoor",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1732559148256,
+      "tag": "0002_mighty_tyrannus",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1732560911397,
+      "tag": "0003_soft_goblin_queen",
+      "breakpoints": true
     }
   ]
 }

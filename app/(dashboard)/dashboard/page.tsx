@@ -1,13 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import PDFViewer from "@/components/pdf-viewer"
 import FlashcardView from "@/components/flashcard-view"
 import ChatView from "@/components/chat-view"
 import SummaryView from "@/components/summary-view"
-import { Upload, PanelLeftClose, PanelLeftOpen, X, ChevronDown, ChevronRight, Loader2, ScanLine, CarIcon, Car } from 'lucide-react'
+import { Upload, PanelLeftClose, PanelLeftOpen, File, X, ChevronDown, ChevronRight, Loader2, ScanLine, CarIcon, Car } from 'lucide-react'
 import {
   ResizableHandle,
   ResizablePanel,
@@ -41,12 +41,19 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Progress } from "@/components/ui/progress"
 
+
 interface FileStatus {
   isUploading: boolean
   isScanning: boolean
   isGeneratingFlashcards: boolean
   uploadProgress: number
+  status: string
+  currentPage?: number
+  totalPages?: number
+  processingStep: 'uploading' | 'scanning' | 'generating' | 'complete' | 'error'
+  stepDetails: string
   flashcards: Flashcard[]
+  url?: string
 }
 
 interface Flashcard {
@@ -66,17 +73,57 @@ interface Flashcard {
 export default function Page() {
   const [files, setFiles] = useState<File[]>([])
   const [currentFile, setCurrentFile] = useState<File | null>(null)
+  const [currentFileUrl, setCurrentFileUrl] = useState<string | null>(null)
   const [isPdfVisible, setIsPdfVisible] = useState(true)
   const [fileToDelete, setFileToDelete] = useState<File | null>(null)
   const [isFileListVisible, setIsFileListVisible] = useState(true)
   const [fileStatuses, setFileStatuses] = useState<Map<string, FileStatus>>(new Map())
   const [isCardsDialogOpen, setIsCardsDialogOpen] = useState(false)
   const [selectedFileForCards, setSelectedFileForCards] = useState<string | null>(null)
+  const [savedFiles, setSavedFiles] = useState<any[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+
+  // Load saved files on mount
+  useEffect(() => {
+    const loadSavedFiles = async () => {
+      try {
+        const response = await fetch('/api/files/list')
+        if (response.ok) {
+          const { files } = await response.json()
+          setSavedFiles(files)
+          
+          // Initialize file statuses for saved files
+          const newStatuses = new Map<string, FileStatus>()
+          files.forEach((file: any) => {
+            const fileKey = `${file.id}-${file.filename}`
+            newStatuses.set(fileKey, {
+              isUploading: false,
+              isScanning: false,
+              isGeneratingFlashcards: false,
+              uploadProgress: 100,
+              status: 'Complete!',
+              processingStep: 'complete',
+              stepDetails: 'File processing complete',
+              flashcards: [],
+              url: file.url
+            })
+          })
+          setFileStatuses(newStatuses)
+        }
+      } catch (error) {
+        console.error('Error loading saved files:', error)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    loadSavedFiles()
+  }, [])
 
   const simulateFileProcessing = async (file: File) => {
-    const fileKey = file.name + file.lastModified
+    const fileKey = `${file.name + file.lastModified}`
 
-    // Start upload
+    // Initialize file status
     setFileStatuses(prev => {
       const newMap = new Map(prev)
       newMap.set(fileKey, { 
@@ -84,6 +131,9 @@ export default function Page() {
         isScanning: false, 
         isGeneratingFlashcards: false, 
         uploadProgress: 0,
+        status: 'Starting upload...',
+        processingStep: 'uploading',
+        stepDetails: 'Preparing file for upload',
         flashcards: []
       })
       return newMap
@@ -93,10 +143,53 @@ export default function Page() {
       const formData = new FormData()
       formData.append('file', file)
 
+      // Update progress periodically
+      const progressInterval = setInterval(() => {
+        setFileStatuses(prev => {
+          const newMap = new Map(prev)
+          const status = newMap.get(fileKey)
+          if (status && status.isUploading && status.uploadProgress < 90) {
+            const newProgress = status.uploadProgress + 10
+            let statusMessage = 'Uploading file...'
+            let stepDetails = 'Transferring file data'
+            let processingStep: FileStatus['processingStep'] = 'uploading'
+            
+            if (newProgress > 30 && newProgress <= 60) {
+              statusMessage = 'Processing PDF...'
+              stepDetails = 'Analyzing document structure'
+              processingStep = 'scanning'
+            } else if (newProgress > 60 && newProgress <= 90) {
+              statusMessage = 'Generating flashcards...'
+              stepDetails = 'Creating learning materials'
+              processingStep = 'generating'
+            }
+            
+            // Simulate page progress
+            const currentPage = Math.floor((newProgress / 100) * 10)
+            const totalPages = 10
+            
+            newMap.set(fileKey, {
+              ...status,
+              uploadProgress: newProgress,
+              status: statusMessage,
+              processingStep,
+              stepDetails,
+              currentPage,
+              totalPages,
+              isScanning: newProgress > 30 && newProgress <= 60,
+              isGeneratingFlashcards: newProgress > 60 && newProgress <= 90
+            })
+          }
+          return newMap
+        })
+      }, 500)
+
       const response = await fetch('/api/files/process', {
         method: 'POST',
         body: formData,
       })
+
+      clearInterval(progressInterval)
 
       if (!response.ok) {
         throw new Error('Failed to process file')
@@ -115,10 +208,21 @@ export default function Page() {
             isScanning: false,
             isGeneratingFlashcards: false,
             uploadProgress: 100,
+            status: 'Complete!',
+            processingStep: 'complete',
+            stepDetails: 'File processing complete',
+            url: result.fileUrl
           })
         }
         return newMap
       })
+
+      // Refresh saved files list
+      const listResponse = await fetch('/api/files/list')
+      if (listResponse.ok) {
+        const { files } = await listResponse.json()
+        setSavedFiles(files)
+      }
 
       return result
     } catch (error) {
@@ -133,6 +237,9 @@ export default function Page() {
             isScanning: false,
             isGeneratingFlashcards: false,
             uploadProgress: 0,
+            status: 'Error processing file',
+            processingStep: 'error',
+            stepDetails: 'An error occurred during file processing'
           })
         }
         return newMap
@@ -146,32 +253,125 @@ export default function Page() {
     const pdfFiles = newFiles.filter(file => file.type === 'application/pdf')
     
     if (pdfFiles.length > 0) {
+      // Immediately set loading state for all files before processing
+      pdfFiles.forEach(file => {
+        const fileKey = `${file.name + file.lastModified}`
+        setFileStatuses(prev => {
+          const newMap = new Map(prev)
+          newMap.set(fileKey, { 
+            isUploading: true, 
+            isScanning: false, 
+            isGeneratingFlashcards: false, 
+            uploadProgress: 0,
+            status: 'Starting upload...',
+            processingStep: 'uploading',
+            stepDetails: 'Preparing file for upload',
+            flashcards: []
+          })
+          return newMap
+        })
+      })
+
+      // Set files and current file
       setFiles(prevFiles => [...prevFiles, ...pdfFiles])
+      
+      // Set the first file as current if none is selected
       if (!currentFile) {
         setCurrentFile(pdfFiles[0])
+        const objectUrl = URL.createObjectURL(pdfFiles[0])
+        setCurrentFileUrl(objectUrl)
       }
-      setIsPdfVisible(true)
       
       // Process each file
-      for (const file of pdfFiles) {
-        await simulateFileProcessing(file)
-      }
-    } else {
-      alert('Please upload PDF files')
+      pdfFiles.forEach(async (file) => {
+        const fileKey = `${file.name + file.lastModified}`
+        const objectUrl = URL.createObjectURL(file)
+        
+        // Update status with object URL
+        setFileStatuses(prev => {
+          const newMap = new Map(prev)
+          const currentStatus = newMap.get(fileKey)
+          if (currentStatus) {
+            newMap.set(fileKey, { 
+              ...currentStatus,
+              url: objectUrl
+            })
+          }
+          return newMap
+        })
+
+        try {
+          await simulateFileProcessing(file)
+        } catch (error) {
+          console.error('Error uploading file:', error)
+          URL.revokeObjectURL(objectUrl)
+          
+          // Update status to show error
+          setFileStatuses(prev => {
+            const newMap = new Map(prev)
+            const currentStatus = newMap.get(fileKey)
+            if (currentStatus) {
+              newMap.set(fileKey, { 
+                ...currentStatus,
+                isUploading: false,
+                status: 'Error processing file',
+                processingStep: 'error',
+                stepDetails: 'An error occurred during upload'
+              })
+            }
+            return newMap
+          })
+        }
+      })
     }
+    
     event.target.value = ''
   }
 
-  const handleDeleteFile = () => {
-    if (fileToDelete) {
-      setFiles(prevFiles => prevFiles.filter(file => file !== fileToDelete))
-      if (currentFile === fileToDelete) {
-        const remainingFiles = files.filter(file => file !== fileToDelete)
-        setCurrentFile(remainingFiles.length > 0 ? remainingFiles[0] : null)
+  // Clean up object URLs when component unmounts
+  useEffect(() => {
+    return () => {
+      if (currentFileUrl) {
+        URL.revokeObjectURL(currentFileUrl)
       }
-      setFileToDelete(null)
+      fileStatuses.forEach(status => {
+        if (status.url?.startsWith('blob:')) {
+          URL.revokeObjectURL(status.url)
+        }
+      })
     }
-  }
+  }, [fileStatuses, currentFileUrl])
+
+  const handleDeleteFile = async (fileId: number) => {
+    try {
+      const response = await fetch('/api/files/delete', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ fileId }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to delete file');
+      }
+
+      // Remove file from state
+      setSavedFiles(prev => prev.filter(file => file.id !== fileId));
+      setFileStatuses(prev => {
+        const newMap = new Map(prev);
+        const fileKey = `${fileId}-${savedFiles.find(f => f.id === fileId)?.filename}`;
+        newMap.delete(fileKey);
+        return newMap;
+      });
+
+      // Close the dialog
+      setFileToDelete(null);
+    } catch (error) {
+      console.error('Error deleting file:', error);
+      // You might want to show an error message to the user here
+    }
+  };
 
   const handlePdfPanelCollapse = () => {
     setIsPdfVisible(!isPdfVisible)
@@ -219,201 +419,116 @@ export default function Page() {
               </div>
             </div>
             <div className="flex-1 overflow-hidden">
-              {files.length > 0 && (
-                <div className="border-b bg-muted/50">
-                  <div 
-                    className="flex items-center p-2 cursor-pointer hover:bg-muted/80 transition-colors"
+              <div className="flex flex-col space-y-4 p-4">
+                <div className="flex justify-between items-center">
+                  <h2 className="text-xl font-semibold">Files</h2>
+                  <Button
                     onClick={() => setIsFileListVisible(!isFileListVisible)}
+                    variant="ghost"
+                    size="sm"
                   >
-                    <Button variant="ghost" size="icon" className="h-4 w-4 p-0">
-                      {isFileListVisible ? (
-                        <ChevronDown className="h-4 w-4" />
-                      ) : (
-                        <ChevronRight className="h-4 w-4" />
-                      )}
-                    </Button>
-                    <h3 className="text-sm font-medium ml-1">
-                      Uploaded Files ({files.length})
-                    </h3>
-                  </div>
-                  <div className={`overflow-hidden transition-all duration-200 ${
-                    isFileListVisible ? 'max-h-40' : 'max-h-0'
-                  }`}>
-                    <div className="flex gap-2 overflow-x-auto p-2">
-                      {files.map((file, index) => {
-                        const fileKey = file.name + file.lastModified
-                        const status = fileStatuses.get(fileKey)
+                    {isFileListVisible ? 'Hide Files' : 'Show Files'}
+                  </Button>
+                </div>
+
+                {isFileListVisible && (
+                  <div className="space-y-2">
+                    {isLoading ? (
+                      <div className="flex items-center justify-center py-4">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+                      </div>
+                    ) : savedFiles.length === 0 ? (
+                      <div className="text-center py-4 text-gray-500">
+                        No files uploaded yet
+                      </div>
+                    ) : (
+                      savedFiles.map((file) => {
+                        const fileKey = `${file.id}-${file.filename}`;
+                        const status = fileStatuses.get(fileKey);
                         
                         return (
-                          <div key={file.name + index} className="relative group flex items-center">
-                            <Button
-                              variant={currentFile === file ? "default" : "outline"}
-                              size="sm"
-                              onClick={() => setCurrentFile(file)}
-                              className="whitespace-nowrap"
-                              disabled={status?.isUploading || status?.isScanning || status?.isGeneratingFlashcards}
-                            >
-                              <span className="flex items-center gap-2">
-                                {file.name}
-                                {status?.isUploading && (
-                                  <TooltipProvider>
-                                    <Tooltip>
-                                      <TooltipTrigger>
-                                        <div className="flex items-center gap-2 text-muted-foreground">
-                                          <Loader2 className="h-3 w-3 animate-spin" />
-                                          <span className="text-xs">Uploading... {status.uploadProgress}%</span>
-                                        </div>
-                                      </TooltipTrigger>
-                                      <TooltipContent>
-                                        <p>Uploading file...</p>
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  </TooltipProvider>
-                                )}
-                                {status?.isScanning && (
-                                  <TooltipProvider>
-                                    <Tooltip>
-                                      <TooltipTrigger>
-                                        <div className="flex items-center gap-2 text-muted-foreground">
-                                          <ScanLine className="h-3 w-3 animate-pulse" />
-                                          <span className="text-xs">Scanning...</span>
-                                        </div>
-                                      </TooltipTrigger>
-                                      <TooltipContent>
-                                        <p>Scanning document for content...</p>
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  </TooltipProvider>
-                                )}
-                                {status?.isGeneratingFlashcards && (
-                                  <TooltipProvider>
-                                    <Tooltip>
-                                      <TooltipTrigger>
-                                        <div className="flex items-center gap-2 text-muted-foreground">
-                                          <CarIcon className="h-3 w-3 animate-pulse" />
-                                          <span className="text-xs">Generating...</span>
-                                        </div>
-                                      </TooltipTrigger>
-                                      <TooltipContent>
-                                        <p>Generating flashcards from document...</p>
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  </TooltipProvider>
-                                )}
-                              </span>
-                            </Button>
-                            {!status?.isUploading && !status?.isScanning && !status?.isGeneratingFlashcards && (
-                              <div className="flex items-center">
-                                <Dialog open={isCardsDialogOpen && selectedFileForCards === fileKey} onOpenChange={(open) => {
-                                  setIsCardsDialogOpen(open)
-                                  if (!open) setSelectedFileForCards(null)
-                                }}>
-                                  <DialogTrigger asChild>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-6 w-6 p-0 ml-1"
-                                      onClick={() => {
-                                        setSelectedFileForCards(fileKey)
-                                        setIsCardsDialogOpen(true)
-                                      }}
-                                    >
-                                      <Car className="h-3 w-3" />
-                                      <span className="sr-only">Manage flashcards</span>
-                                    </Button>
-                                  </DialogTrigger>
-                                  <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
-                                    <DialogHeader>
-                                      <DialogTitle>Flashcards - {file.name}</DialogTitle>
-                                      <DialogDescription>
-                                        Review and manage generated flashcards
-                                      </DialogDescription>
-                                    </DialogHeader>
-                                    <div className="grid gap-4 py-4">
-                                      {status?.flashcards?.map((card, index) => (
-                                        <Card key={card.id} className="p-4">
-                                          <CardContent className="p-0">
-                                            <div className="font-medium mb-2">Question:</div>
-                                            <div className="text-sm mb-4 text-muted-foreground">{card.question}</div>
-                                            <div className="font-medium mb-2">Answer:</div>
-                                            <div className="text-sm text-muted-foreground">{card.answer}</div>
-                                            {card.hint && (
-                                              <div>
-                                                <div className="font-medium mb-2">Hint:</div>
-                                                <div className="text-sm text-muted-foreground">{card.hint}</div>
-                                              </div>
-                                            )}
-                                            <div className="font-medium mb-2">Difficulty:</div>
-                                            <div className="text-sm text-muted-foreground">{card.difficulty}</div>
-                                            <div className="font-medium mb-2">Metadata:</div>
-                                            <div className="text-sm text-muted-foreground">
-                                              Chapter: {card.metadata.chapter}
-                                              {card.metadata.section && (
-                                                <div>Section: {card.metadata.section}</div>
-                                              )}
-                                              Topic: {card.metadata.topic}
-                                              {card.metadata.language && (
-                                                <div>Language: {card.metadata.language}</div>
-                                              )}
-                                            </div>
-                                          </CardContent>
-                                        </Card>
-                                      ))}
-                                      {(!status?.flashcards || status.flashcards.length === 0) && (
-                                        <div className="text-center text-muted-foreground py-8">
-                                          No flashcards generated yet
-                                        </div>
-                                      )}
-                                    </div>
-                                  </DialogContent>
-                                </Dialog>
-                                <TooltipProvider>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <AlertDialog>
-                                        <AlertDialogTrigger asChild>
-                                          <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            className="h-6 w-6 p-0 ml-1"
-                                            onClick={() => setFileToDelete(file)}
-                                          >
-                                            <X className="h-3 w-3" />
-                                          </Button>
-                                        </AlertDialogTrigger>
-                                        <AlertDialogContent>
-                                          <AlertDialogHeader>
-                                            <AlertDialogTitle>Delete File</AlertDialogTitle>
-                                            <AlertDialogDescription>
-                                              Are you sure you want to delete "{file.name}"? This action cannot be undone.
-                                            </AlertDialogDescription>
-                                          </AlertDialogHeader>
-                                          <AlertDialogFooter>
-                                            <AlertDialogCancel onClick={() => setFileToDelete(null)}>
-                                              Cancel
-                                            </AlertDialogCancel>
-                                            <AlertDialogAction onClick={handleDeleteFile}>
-                                              Delete
-                                            </AlertDialogAction>
-                                          </AlertDialogFooter>
-                                        </AlertDialogContent>
-                                      </AlertDialog>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                      <p>Delete file</p>
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
+                          <div
+                            key={file.id}
+                            className="flex items-center justify-between p-3 bg-white rounded-lg shadow-sm"
+                          >
+                            <div className="flex items-center space-x-3">
+                              <div className="flex-shrink-0">
+                                <File className="h-6 w-6 text-blue-500" />
                               </div>
-                            )}
+                              <div>
+                                <h3 className="text-sm font-medium">{file.filename}</h3>
+                                <p className="text-xs text-gray-500">
+                                  {new Date(file.createdAt).toLocaleDateString()}
+                                </p>
+                              </div>
+                            </div>
+                            
+                            <div className="flex items-center space-x-2">
+                              {status?.isUploading || status?.isScanning || status?.isGeneratingFlashcards ? (
+                                <div className="flex items-center space-x-3">
+                                  <div className="flex flex-col w-32">
+                                    <Progress value={status.uploadProgress} className="h-2" />
+                                    {status.currentPage !== undefined && status.totalPages !== undefined && (
+                                      <span className="text-xs text-gray-500 mt-1">
+                                        Page {status.currentPage}/{status.totalPages}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex flex-col">
+                                    <div className="flex items-center space-x-2">
+                                      {status.isUploading && <Upload className="h-4 w-4 text-blue-500 animate-pulse" />}
+                                      {status.isScanning && <ScanLine className="h-4 w-4 text-yellow-500 animate-pulse" />}
+                                      {status.isGeneratingFlashcards && <Loader2 className="h-4 w-4 text-green-500 animate-spin" />}
+                                      <span className="text-sm font-medium text-gray-700">
+                                        {status.status}
+                                      </span>
+                                    </div>
+                                    <span className="text-xs text-gray-500">
+                                      {status.stepDetails}
+                                    </span>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  {status?.url && (
+                                    <a
+                                      href={status.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-blue-500 hover:text-blue-700"
+                                    >
+                                      View
+                                    </a>
+                                  )}
+                                  <Button
+                                    onClick={() => {
+                                      setSelectedFileForCards(fileKey)
+                                      setIsCardsDialogOpen(true)
+                                    }}
+                                    variant="ghost"
+                                    size="sm"
+                                  >
+                                    Flashcards
+                                  </Button>
+                                  <Button
+                                    onClick={() => handleDeleteFile(file.id)}
+                                    variant="ghost"
+                                    size="sm"
+                                    className="text-red-500 hover:text-red-700"
+                                  >
+                                    Delete
+                                  </Button>
+                                </>
+                              )}
+                            </div>
                           </div>
-                        )
-                      })}
-                    </div>
+                        );
+                      })
+                    )}
                   </div>
-                </div>
-              )}
-              <PDFViewer file={currentFile} />
+                )}
+              </div>
+              <PDFViewer file={currentFile} fileUrl={currentFileUrl} />
             </div>
           </div>
         </ResizablePanel>

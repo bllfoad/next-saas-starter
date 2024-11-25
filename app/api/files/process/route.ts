@@ -2,11 +2,10 @@ import { db } from '@/lib/db/drizzle';
 import { flashcards, lessonFiles } from '@/lib/db/schema';
 import { Storage } from '@google-cloud/storage';
 import { NextResponse } from 'next/server';
-import { v4 as uuidv4 } from 'uuid';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { fileTypeFromBuffer } from 'file-type';
 import { z } from 'zod';
 import { PDFDocument } from 'pdf-lib';
+import { getUser } from '@/lib/db/queries';
 
 interface ServiceClients {
   storage: Storage;
@@ -30,11 +29,12 @@ const FlashcardSchema = z.object({
   keyConcept: z.string().optional(),
   difficulty: z.number().int().min(1).max(100),
   index: z.number().default(0),
+  language: z.string().min(2),
   metadata: z.object({
     chapter: z.string(),
     section: z.string().nullable().default(''),
     topic: z.string(),
-    language: z.string().optional(),
+    language: z.string().min(2),
     lineNumber: z.number().int().positive(),
     pageNumber: z.number().int().positive(),
   }).optional(),
@@ -100,88 +100,71 @@ async function validateRequest(request: Request) {
 }
 
 class FileProcessor {
-  private bucket;
+  private bucket: any;
 
   constructor(private clients: ServiceClients) {
     this.bucket = this.clients.storage.bucket(CONFIG.BUCKET_NAME);
   }
 
   async uploadFile(file: File): Promise<string> {
-    const fileName = this.sanitizeFilename(file.name);
-    const fileBuffer = await file.arrayBuffer();
-    const fileSize = fileBuffer.byteLength;
+    console.log('Uploading file:', file.name);
+    const buffer = await file.arrayBuffer();
+    const filename = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+    const blob = this.bucket.file(filename);
 
-    const bucket = this.clients.storage.bucket(CONFIG.BUCKET_NAME);
-    const blob = bucket.file(fileName);
-    const blobStream = blob.createWriteStream();
-
-    return new Promise((resolve, reject) => {
-      blobStream.on('error', (error) => {
-        console.error('Failed to upload file:', error);
-        reject(new ProcessingError('Failed to upload file', 500));
+    try {
+      await blob.save(Buffer.from(buffer), {
+        metadata: {
+          contentType: file.type,
+        },
       });
 
-      blobStream.on('finish', async () => {
-        const fileUrl = `https://storage.googleapis.com/${CONFIG.BUCKET_NAME}/${fileName}`;
-        try {
-          await this.trackFileInDatabase(fileName, fileUrl, file.type, fileSize);
-          resolve(fileUrl);
-        } catch (error) {
-          reject(error);
-        }
+      const [url] = await blob.getSignedUrl({
+        action: 'read',
+        expires: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days
       });
 
-      blobStream.end(Buffer.from(fileBuffer));
-    });
+      // Store file information in the database
+      await db.insert(lessonFiles).values({
+        filename: file.name,
+        url: url,
+        mimeType: file.type,
+        size: file.size,
+        metadata: {
+          originalName: file.name,
+          uploadedAt: new Date().toISOString(),
+        },
+      });
+
+      console.log('File uploaded successfully:', url);
+      return url;
+    } catch (error) {
+      console.error('Error uploading file:', error);
+      throw new ProcessingError('Failed to upload file', 500);
+    }
   }
 
   async splitPdfIntoBatches(file: File): Promise<Uint8Array[][]> {
-    console.log('Starting PDF split into batches...');
     const buffer = await file.arrayBuffer();
     const pdfDoc = await PDFDocument.load(buffer);
-    const totalPages = pdfDoc.getPageCount();
-    console.log(`Total PDF pages: ${totalPages}`);
-    
+    const numPages = pdfDoc.getPageCount();
     const batches: Uint8Array[][] = [];
-
-    for (let i = 0; i < totalPages; i += CONFIG.PAGES_PER_BATCH) {
-      console.log(`Processing batch starting at page ${i + 1}`);
-      const chunk: Uint8Array[] = [];
-      for (let j = i; j < Math.min(i + CONFIG.PAGES_PER_BATCH, totalPages); j++) {
-        const newPdf = await PDFDocument.create();
-        const [copiedPage] = await newPdf.copyPages(pdfDoc, [j]);
-        newPdf.addPage(copiedPage);
-        const pageBytes = await newPdf.save();
-        chunk.push(pageBytes);
-        console.log(`Added page ${j + 1} to current batch`);
-      }
-      batches.push(chunk);
-      console.log(`Completed batch ${batches.length}, size: ${chunk.length} pages`);
+    
+    for (let i = 0; i < numPages; i += CONFIG.PAGES_PER_BATCH) {
+      const newPdf = await PDFDocument.create();
+      const pageIndices = Array.from(
+        { length: Math.min(CONFIG.PAGES_PER_BATCH, numPages - i) },
+        (_, k) => i + k
+      );
+      
+      const pages = await newPdf.copyPages(pdfDoc, pageIndices);
+      pages.forEach(page => newPdf.addPage(page));
+      
+      const pdfBytes = await newPdf.save();
+      batches.push([pdfBytes]);
     }
-
-    console.log(`Split complete. Total batches: ${batches.length}`);
+    
     return batches;
-  }
-
-  private async trackFileInDatabase(fileName: string, fileUrl: string, mimeType: string, fileSize: number) {
-    try {
-      const [insertResult] = await db.insert(lessonFiles).values({
-        filename: fileName,
-        url: fileUrl,
-        mimeType: mimeType,
-        size: fileSize, 
-        metadata: {}
-      }).returning();
-
-      return insertResult;
-    } catch (error) {
-      console.error('Failed to track file in database:', error);
-      throw new ProcessingError('Failed to track file in database', 500);
-    }
-  }
-
-  private sanitizeFilename(filename: string): string {
-    return filename.replace(/[^a-zA-Z0-9.-]/g, '_');
   }
 }
 
@@ -203,7 +186,7 @@ class FlashcardGenerator {
     return text.trim();
   }
 
-  private async processChunkWithRetry(pdfBatch: Uint8Array[], pageNumbers: number[], file: File, attempt = 0): Promise<Flashcard[]> {
+  private async processChunkWithRetry(pdfBatch: Uint8Array[], pageNumbers: number[], file: File, user: any, attempt = 0): Promise<Flashcard[]> {
     try {
       console.log(`Processing batch with pages: ${pageNumbers.join(', ')}`);
       const model = this.genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL_NAME || 'gemini-1.5-flash' });
@@ -216,8 +199,11 @@ class FlashcardGenerator {
       }));
       console.log('Prepared PDF parts for Gemini API');
 
+      const userLanguage = typeof user.mainLanguage === 'string' ? user.mainLanguage : 'en';
+      console.log('Using language:', userLanguage);
+
       const prompt = {
-        text: `You are a flashcard generation assistant. Create educational flashcards from the following PDF content.
+        text: `You are a flashcard generation assistant. Create educational flashcards in ${userLanguage} from the following PDF content.
         Each flashcard should have:
         - A clear, concise term
         - A comprehensive definition
@@ -231,12 +217,12 @@ class FlashcardGenerator {
           61-80: Complex topics
           81-100: Advanced concepts
         
-        Return the flashcards as a JSON object with a 'flashcards' array containing 3-5 flashcard objects.
         Focus on the most important concepts and ensure each flashcard is unique and valuable for learning.
         
         For each flashcard, include:
         - source: "${file.name}"
         - page: The page number as a string (e.g. "1", "2", etc)
+        - language: "${userLanguage}"
         
         Example response format:
         {
@@ -249,7 +235,8 @@ class FlashcardGenerator {
               "keyConcept": "Main topic",
               "difficulty": 50,
               "source": "${file.name}",
-              "page": "1"
+              "page": "1",
+              "language": "${userLanguage}"
             }
           ]
         }`
@@ -277,7 +264,8 @@ class FlashcardGenerator {
         parsed.flashcards = parsed.flashcards.map((card: any, index: number) => ({
           ...card,
           source: file.name,
-          page: pageNumbers[index % pageNumbers.length].toString()
+          page: pageNumbers[index % pageNumbers.length].toString(),
+          language: userLanguage
         }));
         console.log(`Processed ${parsed.flashcards.length} flashcards`);
       }
@@ -293,13 +281,13 @@ class FlashcardGenerator {
         const delay = CONFIG.INITIAL_RETRY_DELAY * Math.pow(2, attempt);
         console.log(`Retrying in ${delay}ms... (attempt ${attempt + 1}/${CONFIG.MAX_RETRIES})`);
         await new Promise(resolve => setTimeout(resolve, delay));
-        return this.processChunkWithRetry(pdfBatch, pageNumbers, file, attempt + 1);
+        return this.processChunkWithRetry(pdfBatch, pageNumbers, file, user, attempt + 1);
       }
       throw new ProcessingError(error instanceof Error ? error.message : 'Failed to process PDF batch', 500);
     }
   }
 
-  async generate(pdfBatches: Uint8Array[][], file: File): Promise<void> {
+  async generate(pdfBatches: Uint8Array[][], file: File, user: any): Promise<void> {
     console.log(`Starting flashcard generation for ${file.name}`);
     console.log(`Total batches: ${pdfBatches.length}`);
     
@@ -307,7 +295,7 @@ class FlashcardGenerator {
     for (const batch of pdfBatches) {
       console.log(`Processing batch ${pageNumber} of ${pdfBatches.length}`);
       const pageNumbers = Array.from({ length: batch.length }, (_, i) => pageNumber + i);
-      const flashcards = await this.processChunkWithRetry(batch, pageNumbers, file);
+      const flashcards = await this.processChunkWithRetry(batch, pageNumbers, file, user);
       console.log(`Generated ${flashcards.length} flashcards for batch`);
       
       for (const flashcard of flashcards) {
@@ -352,6 +340,11 @@ export async function POST(request: Request) {
     const { file } = await validateRequest(request);
     console.log('Processing file:', file.name);
 
+    const user = await getUser();
+    if (!user) {
+      return NextResponse.json({ error: 'User not authenticated' }, { status: 401 });
+    }
+
     const fileProcessor = new FileProcessor(clients);
     const fileUrl = await fileProcessor.uploadFile(file);
     
@@ -364,7 +357,7 @@ export async function POST(request: Request) {
     }
     
     const flashcardGenerator = new FlashcardGenerator(clients.genAI);
-    await flashcardGenerator.generate(pdfBatches, file);
+    await flashcardGenerator.generate(pdfBatches, file, user);
 
     return NextResponse.json({
       message: 'File processed successfully',

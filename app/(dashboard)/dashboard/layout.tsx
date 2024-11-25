@@ -29,6 +29,7 @@ const navigationItems = [
   { name: 'Team', href: '/dashboard/team', icon: Users },
   { name: 'Help', href: '/dashboard/help', icon: HelpCircle },
   { name: 'Settings', href: '/dashboard/settings', icon: Settings },
+  { name: 'Profile', href: '/dashboard/profile', icon: Settings },
 ]
 
 export default function DashboardLayout({
@@ -46,7 +47,7 @@ export default function DashboardLayout({
           <SidebarHeader>
             <div className="flex items-center gap-2">
               <Avatar className="h-8 w-8 shrink-0">
-                <AvatarImage src={user?.image || ''} alt={user?.name || ''} />
+                <AvatarImage src={user?.avatarUrl || ''} alt={user?.name || ''} />
                 <AvatarFallback>
                   {user?.email?.charAt(0).toUpperCase() || 'U'}
                 </AvatarFallback>
@@ -84,7 +85,7 @@ export default function DashboardLayout({
         <div className="flex-1 flex flex-col min-h-0">
           <header className="h-14 border-b px-4 flex items-center gap-4 sticky top-0 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
             <SidebarTrigger />
-            <div className="font-semibold">YouLearn</div>
+            <div className="font-semibold">Danerdz</div>
           </header>
           <main className="flex-1 overflow-hidden">
             {children}
